@@ -79,6 +79,10 @@ async def get_graph():
 	return _compiled_graph
 
 
+def is_ready() -> bool:
+	return _compiled_graph is not None
+
+
 async def orchestrate(query: str) -> dict[str, str]:
 	graph = await get_graph()
 	final_state = await graph.ainvoke({"query": query, "specialists": [], "results": {}})
