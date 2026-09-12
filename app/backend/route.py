@@ -39,8 +39,16 @@ async def lifespan(app: FastAPI):
         await _traced_warm_graph()
         print("agent is ready...")
     except Exception as e:
+        import traceback
         app.state.startup_error = str(e)
         print(f"[ERROR] agent failed to initialize: {e}")
+        traceback.print_exc()
+        if e.__cause__:
+            print("--- caused by ---")
+            traceback.print_exception(type(e.__cause__), e.__cause__, e.__cause__.__traceback__)
+        for sub in getattr(e, "exceptions", []):
+            print("--- sub-exception ---")
+            traceback.print_exception(type(sub), sub, sub.__traceback__)
 
     yield
 

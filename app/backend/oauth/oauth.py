@@ -11,6 +11,10 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parents[3] / ".env", override=T
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_ANON_KEY"])
+supabase_admin = create_client(
+    os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+)
+
 
 class LoginRequest(BaseModel):
     email: str
@@ -27,7 +31,7 @@ class SignupResponse(BaseModel):
     access_token: str | None = None
 
 def save_login(user: SupabaseUser) -> None:
-    supabase.table("user_accounts").upsert(
+    supabase_admin.table("user_accounts").upsert(
         {
             "id": user.id,
             "email": user.email,
@@ -44,7 +48,8 @@ async def signup(body: LoginRequest):
             "email": str(body.email),
             "password": body.password,
         })
-    except Exception:
+    except Exception as e:
+        print(f"[SIGNUP ERROR] {type(e).__name__}: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unable to create account")
 
     if not result.user:
@@ -57,7 +62,8 @@ async def signup(body: LoginRequest):
     )
     try:
         save_login(user)
-    except Exception:
+    except Exception as e:
+        print(f"[SAVE_LOGIN ERROR] {type(e).__name__}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Account profile could not be saved")
 
     if result.session:
