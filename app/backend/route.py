@@ -1,17 +1,16 @@
 import os
 from pathlib import Path
-from typing import Optional,List
-from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, HTTPException,Request
+from fastapi import Depends, FastAPI, HTTPException
 from slowapi import Limiter,_rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from contextlib import asynccontextmanager
 from langsmith import traceable
 from dotenv import load_dotenv
-from pydantic import BaseModel,Field
-load_dotenv(dotenv_path=Path(__file__).resolve().parents[2]/".env",override=True)
+from pydantic import BaseModel
+
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env", override=True)
 os.environ.setdefault("LANGSMITH_TRACING", "true")
 os.environ.setdefault("LANGSMITH_PROJECT", "debugger agent")
 
@@ -19,6 +18,8 @@ if not os.environ.get("LANGCHAIN_API_KEY") and not os.environ.get("LANGSMITH_API
     print("[WARN] LANGCHAIN_API_KEY / LANGSMITH_API_KEY not set — @traceable calls will not report to LangSmith.")
 
 from debugger_agent.agent.orchestrator import orchestrate,get_graph,is_ready
+from app.backend.oauth.oauth import router as auth_router
+from app.backend.oauth.security import SupabaseUser, get_current_user
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -84,7 +85,8 @@ async def get_health() -> HealthResponse:
 @router.post("/", response_model=DiagnosticResponse)
 @limiter.limit("20/minute")
 @traceable(name="Diagnosis")
-async def run_diagnostic(request: DiagnosticRequest) -> DiagnosticResponse:
+async def run_diagnostic(request: DiagnosticRequest,
+                         user: SupabaseUser = Depends(get_current_user)):
     query = request.query.strip()
     if not query:
         raise HTTPException(status_code=400, detail="query must not be empty")
