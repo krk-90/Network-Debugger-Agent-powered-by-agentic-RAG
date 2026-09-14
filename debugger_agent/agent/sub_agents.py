@@ -1,10 +1,16 @@
 import asyncio
-
+import os
 from langchain.agents import create_agent
 from langchain_groq import ChatGroq
+from langsmith import traceable
 from .mcp_server.mcp_bridge import get_network_tools
 from ..agentic_rag.agent_rag import retrieve_dns_context
 
+os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+os.environ.setdefault("LANGCHAIN_PROJECT", "rag-tracing")
+
+if not os.environ.get("LANGCHAIN_API_KEY") and not os.environ.get("LANGSMITH_API_KEY"):
+    print("[WARN] LANGCHAIN_API_KEY / LANGSMITH_API_KEY not set — @traceable calls will not report to LangSmith.")
 
 def select_tools(tools, names):
     selected = [tool for tool in tools if tool.name in names]
@@ -14,6 +20,7 @@ def select_tools(tools, names):
     return selected
 
 
+@traceable(name="create_network_specialist_agents", run_type="chain")
 async def create_specialist_agents():
     tools = await get_network_tools()
     model = ChatGroq(

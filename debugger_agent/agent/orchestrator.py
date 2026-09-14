@@ -2,11 +2,17 @@ import asyncio
 import operator
 import sys
 from typing import Annotated, TypedDict
-
+import os
 from langgraph.graph import END, START, StateGraph
+from langsmith import traceable
 
 from .sub_agents import create_specialist_agents
 
+os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+os.environ.setdefault("LANGCHAIN_PROJECT", "rag-tracing")
+
+if not os.environ.get("LANGCHAIN_API_KEY") and not os.environ.get("LANGSMITH_API_KEY"):
+    print("[WARN] LANGCHAIN_API_KEY / LANGSMITH_API_KEY not set — @traceable calls will not report to LangSmith.")
 
 class DiagnosticState(TypedDict):
 	query: str
@@ -34,6 +40,7 @@ def select_specialists(query: str) -> list[str]:
 	return selected or ["dns", "connectivity", "service"]
 
 
+@traceable(name="build_network_diagnostic_graph", run_type="chain")
 async def build_graph():
 	dns_agent, connectivity_agent, service_agent = await create_specialist_agents()
 	agents = {"dns": dns_agent, "connectivity": connectivity_agent, "service": service_agent}
@@ -83,6 +90,7 @@ def is_ready() -> bool:
 	return _compiled_graph is not None
 
 
+@traceable(name="network_diagnostic", run_type="chain")
 async def orchestrate(query: str) -> dict[str, str]:
 	graph = await get_graph()
 	final_state = await graph.ainvoke({"query": query, "specialists": [], "results": {}})
