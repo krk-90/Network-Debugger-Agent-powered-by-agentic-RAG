@@ -13,10 +13,10 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from supabase import create_client
-
 from mcp.server.transport_security import TransportSecuritySettings
+
 from debugger_agent.agent.mcp_server.server import mcp
-from debugger_agent.agent.orchestrator import orchestrate, get_graph
+from debugger_agent.agent.orchestrator import orchestrate
 from app.backend.oauth.oauth import router as auth_router
 from app.backend.oauth.security import SupabaseUser, get_current_user
 
@@ -29,24 +29,18 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 limiter = Limiter(key_func=get_remote_address)
-
 BASE_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIST = BASE_DIR / "app" / "frontend" / "dist"
 
-# The MCP server is mounted into this same FastAPI process.
+render_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
 mcp.settings.host = os.getenv("NETWORK_MCP_HOST", "0.0.0.0")
 mcp.settings.port = int(os.getenv("PORT", os.getenv("NETWORK_MCP_PORT", "10000")))
 mcp.settings.streamable_http_path = "/mcp"
 mcp.settings.transport_security = TransportSecuritySettings(
     enable_dns_rebinding_protection=True,
-    allowed_hosts=[
-        os.getenv("NETWORK_MCP_ALLOWED_HOST", "localhost"),
-        "localhost:*",
-        "127.0.0.1:*",
-    ],
+    allowed_hosts=[render_hostname, f"{render_hostname}:*", "localhost:*", "127.0.0.1:*"],
     allowed_origins=[os.getenv("NETWORK_MCP_ALLOWED_ORIGIN", "http://localhost:5173")],
 )
-
 mcp_http_app = mcp.streamable_http_app()
 
 @asynccontextmanager
@@ -55,11 +49,8 @@ async def lifespan(app: FastAPI):
     print("Starting unified Network Debugger service...")
     print(f"Frontend dist: {FRONTEND_DIST}")
     print(f"MCP endpoint: /mcp")
-
-    # MCP's session manager must run for the lifetime of the parent app.
     async with mcp.session_manager.run():
         yield
-
     print("shutdown [clearing up]...")
 
 router = FastAPI(
@@ -123,10 +114,8 @@ async def run_diagnostic(
 
     return DiagnosticResponse(results=results)
 
-# Mount MCP after API routes so /mcp is handled by FastMCP.
 router.mount("/mcp", mcp_http_app)
 
-# Serve the Vite production bundle from the same origin.
 ASSETS_DIR = FRONTEND_DIST / "assets"
 if ASSETS_DIR.exists():
     router.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="frontend-assets")
@@ -140,7 +129,6 @@ async def frontend_root():
 
 @router.get("/{path:path}", include_in_schema=False)
 async def frontend_fallback(path: str):
-    # API/MCP paths are registered above; unmatched browser paths use SPA fallback.
     index = FRONTEND_DIST / "index.html"
     if not index.exists():
         raise HTTPException(status_code=404, detail="Frontend bundle is not built")
