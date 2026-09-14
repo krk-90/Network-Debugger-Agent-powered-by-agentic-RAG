@@ -12,3 +12,6 @@ langchain-mcp-adapters>=0.1.0
 # LangChain agent framework + Groq LLM provider
 langchain>=0.3.0
 langchain-groq>=0.2.0
+langchain-community>=0.3.0
+langchain-text-splitters>=0.3.0
+langchain-google-genai>=2.0.0

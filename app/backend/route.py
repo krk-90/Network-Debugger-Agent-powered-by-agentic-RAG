@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException,Request
 from slowapi import Limiter,_rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -90,15 +90,26 @@ async def get_health() -> HealthResponse:
     return HealthResponse(status="healthy" if is_ready() else "unhealthy")
 
 
+from fastapi import Request, Depends, HTTPException
+
 @router.post("/", response_model=DiagnosticResponse)
 @limiter.limit("20/minute")
 @traceable(name="Diagnosis")
-async def run_diagnostic(request: DiagnosticRequest,
-                         user: SupabaseUser = Depends(get_current_user)):
-    query = request.query.strip()
+async def run_diagnostic(
+    request: Request,
+    payload: DiagnosticRequest,
+    user: SupabaseUser = Depends(get_current_user)
+):
+    query = payload.query.strip()
     if not query:
-        raise HTTPException(status_code=400, detail="query must not be empty")
+        raise HTTPException(
+            status_code=400,
+            detail="query must not be empty"
+        )
     if not is_ready():
-        raise HTTPException(status_code=503, detail="agent is not ready")
+        raise HTTPException(
+            status_code=503,
+            detail="agent is not ready"
+        )
     results = await orchestrate(query)
     return DiagnosticResponse(results=results)

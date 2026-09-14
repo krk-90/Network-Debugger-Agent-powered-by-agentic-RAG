@@ -82,10 +82,15 @@ async def signup(body: LoginRequest):
 async def login(body: LoginRequest):
     try:
         result = supabase.auth.sign_in_with_password({
-            "email": str(body.email),
+            "email": body.email,
             "password": body.password,
         })
-    except Exception:
+
+        print("LOGIN USER:", result.user)
+        print("LOGIN SESSION:", result.session)
+
+    except Exception as e:
+        print(f"[LOGIN ERROR] {type(e).__name__}: {e}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
     if not result.session or not result.user:
