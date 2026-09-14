@@ -1,3 +1,5 @@
+import platform
+import shutil
 import socket
 import ssl
 import subprocess
@@ -10,20 +12,45 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP("network-debugger")
 
 
+def _run_command(command: list[str], timeout: int) -> dict[str, Any]:
+    """Run a diagnostic command safely without invoking a shell."""
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        return {
+            "return_code": result.returncode,
+            "output": result.stdout or result.stderr,
+        }
+    except FileNotFoundError:
+        return {
+            "return_code": None,
+            "output": None,
+            "error": f"{command[0]} was not found on PATH",
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "return_code": None,
+            "output": None,
+            "error": f"{command[0]} timed out after {timeout}s",
+        }
+
+
 @mcp.tool()
 def get_dns_config() -> dict[str, Any]:
-    """Return the host DNS configuration on Windows."""
-    result = subprocess.run(
-        ["ipconfig", "/all"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    return {
-        "return_code": result.returncode,
-        "output": result.stdout or result.stderr,
-    }
+    """Return the host DNS configuration on Windows or Linux."""
+    if platform.system().lower() == "windows":
+        return _run_command(["ipconfig", "/all"], 30)
+
+    try:
+        with open("/etc/resolv.conf", "r", encoding="utf-8") as file:
+            return {"return_code": 0, "output": file.read()}
+    except OSError as error:
+        return {"return_code": None, "output": None, "error": str(error)}
 
 
 @mcp.tool()
@@ -39,42 +66,45 @@ def get_public_ip() -> dict[str, Any]:
 @mcp.tool()
 def dns_lookup(host: str) -> dict[str, Any]:
     """Resolve a hostname to IPv4 and IPv6 addresses."""
-    addresses = sorted({item[4][0] for item in socket.getaddrinfo(host, None)})
-    return {"host": host, "addresses": addresses}
+    try:
+        addresses = sorted({item[4][0] for item in socket.getaddrinfo(host, None)})
+        return {"host": host, "addresses": addresses}
+    except socket.gaierror as error:
+        return {"host": host, "addresses": [], "error": str(error)}
 
 
 @mcp.tool()
 def ping(host: str, count: int = 4) -> dict[str, Any]:
-    """Send ICMP echo requests to a host."""
-    result = subprocess.run(
-        ["ping", "-n", str(max(1, count)), host],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    return {
-        "host": host,
-        "return_code": result.returncode,
-        "output": result.stdout or result.stderr,
-    }
+    """Send ICMP echo requests using the host operating system's ping utility."""
+    count = max(1, min(count, 10))
+    if platform.system().lower() == "windows":
+        command = ["ping", "-n", str(count), host]
+    else:
+        command = ["ping", "-c", str(count), host]
+    return {"host": host, **_run_command(command, 30)}
 
 
 @mcp.tool()
 def traceroute(host: str, max_hops: int = 12) -> dict[str, Any]:
-    """Trace the route to a host on Windows."""
-    result = subprocess.run(
-        ["tracert", "-h", str(max(1, max_hops)), host],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    return {
-        "host": host,
-        "return_code": result.returncode,
-        "output": result.stdout or result.stderr,
-    }
+    """Trace the route to a host on Windows or Linux."""
+    max_hops = max(1, min(max_hops, 30))
+    if platform.system().lower() == "windows":
+        command = ["tracert", "-h", str(max_hops), host]
+    else:
+        executable = shutil.which("traceroute") or shutil.which("tracepath")
+        if not executable:
+            return {
+                "host": host,
+                "return_code": None,
+                "output": None,
+                "error": "Neither traceroute nor tracepath is installed on the server",
+            }
+        command = (
+            [executable, "-m", str(max_hops), host]
+            if executable.endswith("traceroute")
+            else [executable, host]
+        )
+    return {"host": host, **_run_command(command, 60)}
 
 
 @mcp.tool()
@@ -100,30 +130,21 @@ def port_check(host: str, port: int, timeout: float = 5.0) -> dict[str, Any]:
 
 @mcp.tool()
 def mtr(host: str, cycles: int = 10) -> dict[str, Any]:
-    """Run MTR to a host; install MTR separately on Windows."""
-    try:
-        result = subprocess.run(
-            ["mtr", "--report", "--report-cycles", str(max(1, cycles)), host],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-    except FileNotFoundError:
+    """Run MTR if it is installed on the server."""
+    executable = shutil.which("mtr")
+    if not executable:
         return {
             "host": host,
             "available": False,
-            "error": "mtr was not found on PATH. Install mtr and try again.",
+            "error": "mtr was not found on PATH",
         }
-    except subprocess.TimeoutExpired:
-        return {"host": host, "available": True, "error": "mtr timed out"}
 
-    return {
-        "host": host,
-        "available": True,
-        "return_code": result.returncode,
-        "output": result.stdout or result.stderr,
-    }
+    cycles = max(1, min(cycles, 20))
+    result = _run_command(
+        [executable, "--report", "--report-cycles", str(cycles), host],
+        120,
+    )
+    return {"host": host, "available": True, **result}
 
 
 @mcp.tool()
