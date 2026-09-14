@@ -15,3 +15,5 @@ langchain-groq>=0.2.0
 langchain-community>=0.3.0
 langchain-text-splitters>=0.3.0
 langchain-google-genai>=2.0.0
+langsmith>=0.1.147
+pypdf>=5.0.0
