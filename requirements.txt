@@ -7,7 +7,8 @@ python-dotenv>=1.0.0
 slowapi>=0.1.9
 
 # MCP (Model Context Protocol) server + client
-mcp>=1.2.0
+# Keep v1.x for compatibility with the current FastMCP implementation.
+mcp>=1.28,<2
 langchain-mcp-adapters>=0.1.0
 
 # LangChain agent framework + Groq LLM provider
