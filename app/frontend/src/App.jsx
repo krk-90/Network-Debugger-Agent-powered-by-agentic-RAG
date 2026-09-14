@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Activity, ChevronDown, Copy, LogOut, Menu, Network, Plus, Search, Send, Shield, Sparkles, Wifi, X } from 'lucide-react'
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8080'
 const modes = ['Network Debugger', 'Quick Diagnosis', 'Deep Investigation', 'Security Analysis', 'Incident Analysis']
 
 function App() {
