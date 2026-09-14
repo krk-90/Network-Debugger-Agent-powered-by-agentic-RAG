@@ -4,6 +4,7 @@ uvicorn[standard]>=0.30.0
 pydantic>=2.7.0
 supabase>=2.0.0
 python-dotenv>=1.0.0
+slowapi>=0.1.9
 
 # MCP (Model Context Protocol) server + client
 mcp>=1.2.0
