@@ -9,13 +9,20 @@ from contextlib import asynccontextmanager
 from langsmith import traceable
 from dotenv import load_dotenv
 from pydantic import BaseModel
-
+from supabase import create_client
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env", override=True)
 os.environ.setdefault("LANGSMITH_TRACING", "true")
 os.environ.setdefault("LANGSMITH_PROJECT", "debugger agent")
 
 if not os.environ.get("LANGCHAIN_API_KEY") and not os.environ.get("LANGSMITH_API_KEY"):
     print("[WARN] LANGCHAIN_API_KEY / LANGSMITH_API_KEY not set — @traceable calls will not report to LangSmith.")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY
+)
 
 from debugger_agent.agent.orchestrator import orchestrate,get_graph,is_ready
 from app.backend.oauth.oauth import router as auth_router
@@ -104,12 +111,24 @@ async def run_diagnostic(
     if not query:
         raise HTTPException(
             status_code=400,
-            detail="query must not be empty"
-        )
+            detail="query must not be empty")
     if not is_ready():
         raise HTTPException(
             status_code=503,
-            detail="agent is not ready"
-        )
+            detail="agent is not ready")
     results = await orchestrate(query)
+    try:
+        answer = str(results)
+        save_result = (
+            supabase.table("chat_history")
+            .insert({
+                "user_id": str(user.id),
+                "question": query,
+                "answer": answer
+            })
+            .execute()
+        )
+        print("Chat saved:", save_result)
+    except Exception as e:
+        print(f"[CHAT HISTORY ERROR] {e}")
     return DiagnosticResponse(results=results)
