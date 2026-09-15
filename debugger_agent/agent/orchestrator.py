@@ -10,14 +10,14 @@ from langsmith import traceable
 
 from .sub_agents import create_specialist_agents
 
-os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
-os.environ.setdefault("LANGCHAIN_PROJECT", "rag-tracing")
+if os.getenv("LANGCHAIN_API_KEY") or os.getenv("LANGSMITH_API_KEY"):
+    os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+    os.environ.setdefault("LANGCHAIN_PROJECT", "rag-tracing")
+else:
+    os.environ.pop("LANGCHAIN_TRACING_V2", None)
+    os.environ.pop("LANGSMITH_TRACING", None)
+    print("[INFO] LangSmith tracing disabled because no API key is configured.")
 
-if not os.environ.get("LANGCHAIN_API_KEY") and not os.environ.get("LANGSMITH_API_KEY"):
-    print("[WARN] LANGCHAIN_API_KEY / LANGSMITH_API_KEY not set — @traceable calls will not report to LangSmith.")
-
-# Keep individual specialist calls below Render's request timeout. A failed or
-# slow specialist must not cancel the other branches in LangGraph's fan-out.
 SPECIALIST_TIMEOUT_SECONDS = float(os.getenv("SPECIALIST_TIMEOUT_SECONDS", "20"))
 GRAPH_BUILD_TIMEOUT_SECONDS = float(os.getenv("GRAPH_BUILD_TIMEOUT_SECONDS", "12"))
 
@@ -49,23 +49,34 @@ def select_specialists(query: str) -> list[str]:
 
 
 def _format_exception(error: BaseException) -> str:
-    """Expose nested ExceptionGroup details instead of only its top-level name."""
+    """Flatten nested ExceptionGroups into an actionable error message."""
     if isinstance(error, BaseExceptionGroup):
-        parts = []
-        for nested in error.exceptions:
-            parts.append(_format_exception(nested))
-        return " | ".join(parts)
+        parts = [_format_exception(nested) for nested in error.exceptions]
+        return " | ".join(parts) or "ExceptionGroup with no child exceptions"
     return f"{type(error).__name__}: {error}" or type(error).__name__
 
 
 @traceable(name="build_network_diagnostic_graph", run_type="chain")
 async def build_graph():
-    # MCP discovery is an external network operation. Bound it so graph
-    # initialization cannot consume the entire HTTP request budget.
-    dns_agent, connectivity_agent, service_agent = await asyncio.wait_for(
-        create_specialist_agents(), timeout=GRAPH_BUILD_TIMEOUT_SECONDS
-    )
-    agents = {"dns": dns_agent, "connectivity": connectivity_agent, "service": service_agent}
+    try:
+        dns_agent, connectivity_agent, service_agent = await asyncio.wait_for(
+            create_specialist_agents(), timeout=GRAPH_BUILD_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError as error:
+        raise RuntimeError(
+            f"MCP/agent initialization timed out after {GRAPH_BUILD_TIMEOUT_SECONDS:g}s"
+        ) from error
+    except BaseException as error:
+        details = _format_exception(error)
+        print(f"[GRAPH BUILD ERROR] {details}")
+        traceback.print_exception(error)
+        raise RuntimeError(f"MCP/agent initialization failed: {details}") from error
+
+    agents = {
+        "dns": dns_agent,
+        "connectivity": connectivity_agent,
+        "service": service_agent,
+    }
 
     async def router(state: DiagnosticState) -> dict:
         return {"specialists": select_specialists(state["query"])}
@@ -98,9 +109,6 @@ async def build_graph():
                 print(f"[SPECIALIST TIMEOUT] {message}")
                 return {"results": {name: message}}
             except BaseException as error:
-                # LangGraph fans these nodes out in an asyncio TaskGroup. Catch
-                # branch failures here so one bad MCP/LLM/tool call does not
-                # cancel every other specialist and surface as ExceptionGroup.
                 details = _format_exception(error)
                 print(f"[SPECIALIST ERROR] {name}: {details}")
                 traceback.print_exception(error)
