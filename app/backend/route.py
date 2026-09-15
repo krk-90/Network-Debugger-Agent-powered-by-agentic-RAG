@@ -26,6 +26,8 @@ os.environ.setdefault("LANGSMITH_PROJECT", "debugger agent")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+    raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required")
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 limiter = Limiter(key_func=get_remote_address)
@@ -48,7 +50,7 @@ async def lifespan(app: FastAPI):
     app.state.startup_error = None
     print("Starting unified Network Debugger service...")
     print(f"Frontend dist: {FRONTEND_DIST}")
-    print(f"MCP endpoint: /mcp")
+    print("MCP endpoint: /mcp")
     async with mcp.session_manager.run():
         yield
     print("shutdown [clearing up]...")
@@ -89,6 +91,22 @@ class HealthResponse(BaseModel):
 @traceable(name="health")
 async def get_health() -> HealthResponse:
     return HealthResponse(status="healthy")
+
+@router.get("/history")
+async def get_history(user: SupabaseUser = Depends(get_current_user)):
+    try:
+        response = (
+            supabase.table("chat_history")
+            .select("id, question, answer, created_at")
+            .eq("user_id", str(user.id))
+            .order("created_at", desc=True)
+            .limit(100)
+            .execute()
+        )
+        return {"history": response.data or []}
+    except Exception as error:
+        print(f"[CHAT HISTORY READ ERROR] {error}")
+        raise HTTPException(status_code=500, detail="Unable to load history")
 
 @router.post("/", response_model=DiagnosticResponse)
 @limiter.limit("20/minute")
