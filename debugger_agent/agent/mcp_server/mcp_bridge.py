@@ -20,23 +20,36 @@ from .server import (
 _LOCAL_HOSTS = {"127.0.0.1", "localhost", "0.0.0.0", "::1"}
 
 
-def _is_local_mcp_url(url: str) -> bool:
-    """Return True when NETWORK_MCP_URL points back to this process."""
+def _is_self_hosted_mcp_url(url: str) -> bool:
+    """Return True when NETWORK_MCP_URL points to this unified service."""
     try:
-        parsed = urlparse(url)
+        hostname = urlparse(url).hostname
     except ValueError:
         return False
-    return parsed.hostname in _LOCAL_HOSTS
+
+    if not hostname:
+        return False
+
+    if hostname in _LOCAL_HOSTS:
+        return True
+
+    # In the unified Render deployment, FastAPI and MCP share one process.
+    # Calling the public Render URL from that same process creates a
+    # self-HTTP loop and can hit the FastMCP/Starlette 405 routing path.
+    self_hosts = {
+        os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip().lower(),
+        os.getenv("NETWORK_MCP_ALLOWED_HOST", "").strip().lower(),
+    }
+    self_hosts.discard("")
+    return hostname.lower() in self_hosts
 
 
 def _in_process_network_tools():
     """Expose the same MCP tools directly as LangChain tools.
 
     The unified Render deployment hosts FastAPI and the MCP endpoint in the
-    same process. FastMCP v1.x has a Starlette Route wrapper that can reject
-    POSTs with 405 when self-called through localhost. Calling the underlying
-    diagnostic functions directly avoids that self-HTTP loop while preserving
-    the exact same tool implementations.
+    same process. Calling the underlying diagnostic functions directly avoids
+    a self-HTTP loop while preserving the exact same tool implementations.
     """
     functions = [
         get_dns_config,
@@ -62,10 +75,9 @@ def _in_process_network_tools():
 async def get_network_tools():
     mcp_url = os.getenv("NETWORK_MCP_URL", "").strip()
 
-    # If a separate MCP service is configured, keep using MCP remotely.
-    # In the unified Render service NETWORK_MCP_URL points to localhost;
-    # use the in-process tools instead of making the app call itself over HTTP.
-    if mcp_url and not _is_local_mcp_url(mcp_url):
+    # Use remote MCP only when it points to a genuinely separate MCP service.
+    # If it points back to this Render service, stay in-process.
+    if mcp_url and not _is_self_hosted_mcp_url(mcp_url):
         client = MultiServerMCPClient(
             {
                 "network": {
