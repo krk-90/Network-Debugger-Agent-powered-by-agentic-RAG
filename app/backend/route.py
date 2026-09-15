@@ -120,7 +120,15 @@ async def run_diagnostic(
     if not query:
         raise HTTPException(status_code=400, detail="query must not be empty")
 
-    results = await orchestrate(query)
+    try:
+        results = await orchestrate(query)
+    except Exception as error:
+        print(f"[DIAGNOSIS ERROR] {type(error).__name__}: {error}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Diagnosis service failed: {type(error).__name__}: {error}",
+        ) from error
+
     try:
         supabase.table("chat_history").insert({
             "user_id": str(user.id),
