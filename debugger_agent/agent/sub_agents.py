@@ -6,17 +6,17 @@ from langsmith import traceable
 from .mcp_server.mcp_bridge import get_network_tools
 from ..agentic_rag.agent_rag import retrieve_dns_context
 
-os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
-os.environ.setdefault("LANGCHAIN_PROJECT", "rag-tracing")
+if os.getenv("LANGCHAIN_API_KEY") or os.getenv("LANGSMITH_API_KEY"):
+    os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+    os.environ.setdefault("LANGCHAIN_PROJECT", "rag-tracing")
 
-if not os.environ.get("LANGCHAIN_API_KEY") and not os.environ.get("LANGSMITH_API_KEY"):
-    print("[WARN] LANGCHAIN_API_KEY / LANGSMITH_API_KEY not set — @traceable calls will not report to LangSmith.")
 
 def select_tools(tools, names):
     selected = [tool for tool in tools if tool.name in names]
     missing = set(names) - {tool.name for tool in selected}
     if missing:
         raise RuntimeError(f"MCP server did not provide tools: {sorted(missing)}")
+
     return selected
 
 
@@ -30,12 +30,12 @@ async def create_specialist_agents():
     )
 
     dns_agent = create_agent(
-    model=model,
-    tools=[
-        *select_tools(tools, {"dns_lookup", "get_dns_config"}),
-        retrieve_dns_context,
-    ],
-    system_prompt="""
+        model=model,
+        tools=[
+            *select_tools(tools, {"dns_lookup", "get_dns_config"}),
+            retrieve_dns_context,
+        ],
+        system_prompt="""
 You are a senior DNS troubleshooting engineer.
 
 Responsibilities:
@@ -65,7 +65,7 @@ Rules:
 - Cite the tool output that supports each conclusion.
 - Never claim that the knowledge base contains information unless retrieve_dns_context returned it.
 """
-)
+    )
 
     connectivity_agent = create_agent(
         model=model,
@@ -83,7 +83,7 @@ unreachable hosts, and network path failures.
 - Identify where connectivity breaks occur.
 - Distinguish between client-side, ISP-side,
 routing, and destination-side problems.
- - Do not perform DNS or TLS diagnostics.
+- Do not perform DNS or TLS diagnostics.
 
 Output:
 1. Connectivity Findings
@@ -99,7 +99,7 @@ Rules:
 - If evidence is insufficient, state what additional data is needed.
 - Return findings in structured markdown.
 - Cite the tool output that supports each conclusion.
-    """
+"""
     )
 
     service_agent = create_agent(
@@ -109,7 +109,7 @@ Rules:
             {"port_check", "tcp_check", "tls_check"}
         ),
         system_prompt="""
-    You are a senior TCP, port, and TLS diagnostics engineer.
+You are a senior TCP, port, and TLS diagnostics engineer.
 
 Responsibilities:
 - Verify service availability and port accessibility.
@@ -134,7 +134,7 @@ Rules:
 - If evidence is insufficient, state what additional data is needed.
 - Return findings in structured markdown.
 - Cite the tool output that supports each conclusion.
-    """
+"""
     )
 
     return dns_agent, connectivity_agent, service_agent
