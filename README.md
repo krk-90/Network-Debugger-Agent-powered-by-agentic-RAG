@@ -33,24 +33,24 @@ Each specialist is a LangChain agent (Groq-hosted LLM, `openai/gpt-oss-20b`) res
 
 ```
 .
-├── LICENSE                     # Apache-2.0
-├── .env.example                # Environment variable template (fill in and rename to .env)
+├── LICENSE
+├── .env.example
 ├── app/
 │   └── backend/
 │       ├── __init__.py
-│       ├── main.py             # FastAPI app entry point (exposes `fastapi_app`)
-│       └── route.py            # /diagnostics route definition
+│       ├── main.py
+│       └── route.py
 └── debugger_agent/
     ├── __init__.py
     └── agent/
         ├── __init__.py
-        ├── orchestrator.py     # Keyword-based agent routing + concurrent execution
-        ├── sub_agents.py       # DNS / connectivity / service specialist agents
+        ├── orchestrator.py
+        ├── sub_agents.py
         └── mcp_server/
             ├── __init__.py
-            ├── server.py             # FastMCP server exposing network tools
-            ├── network_mcp_http.py   # Entry point to run the MCP server (streamable-http)
-            └── mcp_bridge.py         # LangChain MCP client bridge
+            ├── server.py
+            ├── network_mcp_http.py
+            └── mcp_bridge.py
 ```
 
 ## Prerequisites
@@ -59,7 +59,7 @@ Each specialist is a LangChain agent (Groq-hosted LLM, `openai/gpt-oss-20b`) res
 - A [Groq API key](https://console.groq.com/)
 - `pip` / a virtual environment
 
-> **Platform note:** `server.py`'s `get_dns_config`, `ping`, and `traceroute` tools currently shell out to **Windows-specific commands** (`ipconfig`, `ping -n`, `tracert`). On Linux/macOS these will need to be adapted (`ip addr`/`ifconfig`, `ping -c`, `traceroute`).
+The MCP server is written for the Linux environment used by the Render deployment while remaining compatible with Windows for local diagnostics. Commands such as ping and traceroute are selected according to the operating system, and unavailable utilities return a structured error instead of crashing the server.
 
 ## Installation
 
@@ -70,7 +70,7 @@ cd Network-Debugger-Agent-powered-by-agentic-RAG
 python -m venv .venv
 
 # Windows
-.venv\Scripts\Activate.ps1
+.venv\\Scripts\\Activate.ps1
 
 # macOS / Linux
 source .venv/bin/activate
@@ -86,17 +86,21 @@ GOOGLE_API_KEY=your_google_ai_api_key_here
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_KEY=your_supabase_key
 
-# Optional overrides (defaults shown)
+# Local MCP defaults
 NETWORK_MCP_HOST=127.0.0.1
 NETWORK_MCP_PORT=8000
 NETWORK_MCP_URL=http://127.0.0.1:8000/mcp
+
+# Render MCP deployment
+NETWORK_MCP_ALLOWED_HOST=network-debugger-mcp.onrender.com
+NETWORK_MCP_ALLOWED_ORIGIN=https://network-debugger-frontend.onrender.com
 ```
+
+For Render, the MCP service binds to `0.0.0.0:$PORT` (normally port `10000`) and exposes Streamable HTTP at `/mcp`. Streamable HTTP is the current MCP deployment transport; SSE is not used by this project.
 
 ### Knowledge-base RAG setup
 
-Put DNS runbooks and troubleshooting documents under `knowledge_base/`. The DNS
-specialist retrieves context only through `retrieve_dns_context`; embeddings are
-created with Google Generative AI and vectors are stored in Supabase.
+Put DNS runbooks and troubleshooting documents under `knowledge_base/`. The DNS specialist retrieves context only through `retrieve_dns_context`; embeddings are created with Google Generative AI and vectors are stored in Supabase.
 
 Run this SQL in the Supabase SQL editor before the first retrieval:
 
@@ -129,23 +133,23 @@ $$;
 
 ## Running the project
 
-This project requires **two processes** running at the same time.
+This project requires two processes running at the same time locally.
 
-### 1. Start the MCP server (network tools)
+### 1. Start the MCP server
 
-`network_mcp_http.py` imports its FastMCP instance with a bare `from server import mcp`, so it must be run **from inside its own folder**:
+`network_mcp_http.py` imports its FastMCP instance with `from server import mcp`, so run it from its own folder:
 
 ```bash
 cd debugger_agent/agent/mcp_server
 python network_mcp_http.py
 ```
 
-This starts a FastMCP server on `http://127.0.0.1:8000/mcp` exposing the tools:
+Locally this starts the MCP endpoint at `http://127.0.0.1:8000/mcp` and exposes:
 `dns_lookup`, `get_dns_config`, `get_public_ip`, `ping`, `traceroute`, `mtr`, `tcp_check`, `port_check`, `tls_check`.
 
 ### 2. Start the FastAPI backend
 
-In a **separate terminal**, from the **project root**:
+In a separate terminal, from the project root:
 
 ```bash
 uvicorn app.backend.main:fastapi_app --reload --port 8080
@@ -153,10 +157,43 @@ uvicorn app.backend.main:fastapi_app --reload --port 8080
 
 Interactive API docs will be available at `http://127.0.0.1:8080/docs`.
 
+## Render deployment
+
+The production topology is:
+
+```text
+Render Static Site
+      │
+      ▼
+FastAPI Backend ──────▶ MCP Streamable HTTP
+      │                       │
+      ▼                       ▼
+   Supabase              network tools
+```
+
+The backend should use:
+
+```bash
+NETWORK_MCP_URL=https://network-debugger-mcp.onrender.com/mcp
+CORS_ALLOWED_ORIGINS=https://network-debugger-frontend.onrender.com
+```
+
+The MCP service should use:
+
+```bash
+NETWORK_MCP_HOST=0.0.0.0
+NETWORK_MCP_PORT=10000
+NETWORK_MCP_ALLOWED_HOST=network-debugger-mcp.onrender.com
+NETWORK_MCP_ALLOWED_ORIGIN=https://network-debugger-frontend.onrender.com
+```
+
+Do not commit API keys or other secrets to GitHub. Configure them in Render/Supabase environment settings.
+
 ## Usage
 
 ### Via Swagger UI
-Open `http://127.0.0.1:8080/docs`, expand `POST /diagnostics/`, and try it with a body like:
+
+Open `http://127.0.0.1:8080/docs`, expand `POST /diagnostics/`, and try:
 
 ```json
 {
@@ -193,22 +230,6 @@ curl -X POST http://127.0.0.1:8080/diagnostics/ \
 }
 ```
 
-## Command-line usage (without the API)
-
-The orchestrator can also be run directly:
-
-```bash
-cd debugger_agent/agent
-python orchestrator.py ping google.com
-```
-
-or interactively:
-
-```bash
-python orchestrator.py
-Network diagnostic request: check dns for example.com
-```
-
 ## Routing logic
 
 `orchestrator.py` routes queries by keyword match:
@@ -218,15 +239,3 @@ Network diagnostic request: check dns for example.com
 - **Service**: `port`, `tcp`, `tls`, `ssl`, `https`, `service`, `connection`
 
 If no keywords match, all three specialists run and their results are merged.
-
-## Known limitations / roadmap
-
-- Install dependencies with `pip install -r requirements.txt` after activating the virtual environment.
-- **OS-specific tool commands** in `server.py` assume Windows; cross-platform support needs branching on `platform.system()`.
-- **Agents are rebuilt on every API request** — `create_specialist_agents()` re-creates the MCP client and all three LangChain agents per call. Caching them at FastAPI startup (e.g. via a `lifespan` handler) would reduce latency.
-- **No authentication** is enforced on `/diagnostics` — add auth before exposing this publicly, since it lets arbitrary hosts be pinged/scanned from your server.
-- **RAG ingestion runs when the retrieval chain is first used** and writes the current knowledge-base chunks to the configured Supabase table. Reuse a stable table or add an ingestion command before scaling this workflow.
-
-## License
-
-Apache License 2.0 — see [LICENSE](./LICENSE).

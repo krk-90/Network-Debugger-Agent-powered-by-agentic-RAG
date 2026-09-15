@@ -1,0 +1,22 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       iputils-ping \
+       traceroute \
+       mtr-tiny \
+       dnsutils \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV PYTHONUNBUFFERED=1
+ENV NETWORK_MCP_HOST=0.0.0.0
+
+CMD ["python", "debugger_agent/agent/mcp_server/network_mcp_http.py"]
