@@ -13,6 +13,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from supabase import create_client
+from mcp.server.fastmcp.server import StreamableHTTPASGIApp
 from mcp.server.transport_security import TransportSecuritySettings
 
 from debugger_agent.agent.mcp_server.server import mcp
@@ -39,14 +40,13 @@ FRONTEND_DIST = BASE_DIR / "app" / "frontend" / "dist"
 render_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
 mcp.settings.host = os.getenv("NETWORK_MCP_HOST", "0.0.0.0")
 mcp.settings.port = int(os.getenv("PORT", os.getenv("NETWORK_MCP_PORT", "10000")))
-# streamable_http_app() is mounted below at /mcp, so its internal endpoint
-# must be / to avoid exposing the effective path as /mcp/mcp.
 mcp.settings.streamable_http_path = "/"
 mcp.settings.transport_security = TransportSecuritySettings(
     enable_dns_rebinding_protection=True,
     allowed_hosts=[
         render_hostname,
         f"{render_hostname}:*",
+        os.getenv("NETWORK_MCP_ALLOWED_HOST", ""),
         "localhost:*",
         "127.0.0.1:*",
     ],
@@ -54,7 +54,13 @@ mcp.settings.transport_security = TransportSecuritySettings(
         os.getenv("NETWORK_MCP_ALLOWED_ORIGIN", "http://localhost:5173"),
     ],
 )
-mcp_http_app = mcp.streamable_http_app()
+
+# FastMCP v1.x builds its Streamable HTTP endpoint with Starlette Route(),
+# whose default methods are GET/HEAD. The MCP client must POST JSON-RPC
+# requests, so use the underlying ASGI handler directly behind a Mount,
+# which preserves POST/GET/etc. while retaining the FastMCP session manager.
+mcp.streamable_http_app()
+mcp_http_app = StreamableHTTPASGIApp(mcp.session_manager)
 
 
 @asynccontextmanager
@@ -160,8 +166,8 @@ async def run_diagnostic(
     return DiagnosticResponse(results=results)
 
 
-# FastMCP's streamable_http_app() already owns its endpoint path. Because it is
-# mounted at /mcp, the internal path above is / so the public endpoint is /mcp.
+# Mount the raw Streamable HTTP ASGI handler. Unlike FastMCP v1.x's internal
+# Route(), Mount accepts POST requests required by the Streamable HTTP client.
 router.mount("/mcp", mcp_http_app)
 
 ASSETS_DIR = FRONTEND_DIST / "assets"
