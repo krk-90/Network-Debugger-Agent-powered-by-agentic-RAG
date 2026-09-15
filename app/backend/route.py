@@ -20,9 +20,11 @@ from debugger_agent.agent.orchestrator import orchestrate
 from app.backend.oauth.oauth import router as auth_router
 from app.backend.oauth.security import SupabaseUser, get_current_user
 
-load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env", override=True)
-os.environ.setdefault("LANGSMITH_TRACING", "true")
-os.environ.setdefault("LANGSMITH_PROJECT", "debugger agent")
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env", override=False)
+
+if os.getenv("LANGCHAIN_API_KEY") or os.getenv("LANGSMITH_API_KEY"):
+    os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+    os.environ.setdefault("LANGSMITH_PROJECT", "debugger agent")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -37,13 +39,23 @@ FRONTEND_DIST = BASE_DIR / "app" / "frontend" / "dist"
 render_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
 mcp.settings.host = os.getenv("NETWORK_MCP_HOST", "0.0.0.0")
 mcp.settings.port = int(os.getenv("PORT", os.getenv("NETWORK_MCP_PORT", "10000")))
-mcp.settings.streamable_http_path = "/mcp"
+# streamable_http_app() is mounted below at /mcp, so its internal endpoint
+# must be / to avoid exposing the effective path as /mcp/mcp.
+mcp.settings.streamable_http_path = "/"
 mcp.settings.transport_security = TransportSecuritySettings(
     enable_dns_rebinding_protection=True,
-    allowed_hosts=[render_hostname, f"{render_hostname}:*", "localhost:*", "127.0.0.1:*"],
-    allowed_origins=[os.getenv("NETWORK_MCP_ALLOWED_ORIGIN", "http://localhost:5173")],
+    allowed_hosts=[
+        render_hostname,
+        f"{render_hostname}:*",
+        "localhost:*",
+        "127.0.0.1:*",
+    ],
+    allowed_origins=[
+        os.getenv("NETWORK_MCP_ALLOWED_ORIGIN", "http://localhost:5173"),
+    ],
 )
 mcp_http_app = mcp.streamable_http_app()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -54,6 +66,7 @@ async def lifespan(app: FastAPI):
     async with mcp.session_manager.run():
         yield
     print("shutdown [clearing up]...")
+
 
 router = FastAPI(
     title="DEBUGGER-AGENT",
@@ -78,19 +91,24 @@ router.add_middleware(
 )
 router.include_router(auth_router)
 
+
 class DiagnosticRequest(BaseModel):
     query: str
+
 
 class DiagnosticResponse(BaseModel):
     results: dict[str, str]
 
+
 class HealthResponse(BaseModel):
     status: str
+
 
 @router.get("/health", response_model=HealthResponse)
 @traceable(name="health")
 async def get_health() -> HealthResponse:
     return HealthResponse(status="healthy")
+
 
 @router.get("/history")
 async def get_history(user: SupabaseUser = Depends(get_current_user)):
@@ -105,8 +123,9 @@ async def get_history(user: SupabaseUser = Depends(get_current_user)):
         )
         return {"history": response.data or []}
     except Exception as error:
-        print(f"[CHAT HISTORY READ ERROR] {error}")
+        print(f"[CHAT HISTORY READ ERROR] {type(error).__name__}: {error}")
         raise HTTPException(status_code=500, detail="Unable to load history")
+
 
 @router.post("/", response_model=DiagnosticResponse)
 @limiter.limit("20/minute")
@@ -136,15 +155,19 @@ async def run_diagnostic(
             "answer": str(results),
         }).execute()
     except Exception as error:
-        print(f"[CHAT HISTORY ERROR] {error}")
+        print(f"[CHAT HISTORY ERROR] {type(error).__name__}: {error}")
 
     return DiagnosticResponse(results=results)
 
+
+# FastMCP's streamable_http_app() already owns its endpoint path. Because it is
+# mounted at /mcp, the internal path above is / so the public endpoint is /mcp.
 router.mount("/mcp", mcp_http_app)
 
 ASSETS_DIR = FRONTEND_DIST / "assets"
 if ASSETS_DIR.exists():
     router.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="frontend-assets")
+
 
 @router.get("/", include_in_schema=False)
 async def frontend_root():
@@ -152,6 +175,7 @@ async def frontend_root():
     if not index.exists():
         raise HTTPException(status_code=503, detail="Frontend bundle is not built")
     return FileResponse(index)
+
 
 @router.get("/{path:path}", include_in_schema=False)
 async def frontend_fallback(path: str):
