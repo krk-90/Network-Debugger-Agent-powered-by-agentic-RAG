@@ -1,0 +1,78 @@
+{
+  "k": 5,
+  "cases": [
+    {
+      "id": "N1",
+      "question": "What are common causes of DNS resolution failure?",
+      "relevant": [
+        "dns"
+      ]
+    },
+    {
+      "id": "N2",
+      "question": "What is the difference between DNS timeout and NXDOMAIN?",
+      "relevant": [
+        "dns"
+      ]
+    },
+    {
+      "id": "N3",
+      "question": "How can packet loss be detected?",
+      "relevant": [
+        "network",
+        "tcp"
+      ]
+    },
+    {
+      "id": "N4",
+      "question": "What causes a TCP connection timeout?",
+      "relevant": [
+        "tcp"
+      ]
+    },
+    {
+      "id": "N5",
+      "question": "What is the difference between connection refused and timeout?",
+      "relevant": [
+        "tcp"
+      ]
+    },
+    {
+      "id": "N6",
+      "question": "How can TLS certificate failures be diagnosed?",
+      "relevant": [
+        "tls"
+      ]
+    },
+    {
+      "id": "N7",
+      "question": "What causes high network latency?",
+      "relevant": [
+        "network",
+        "routing"
+      ]
+    },
+    {
+      "id": "N8",
+      "question": "How should an HTTP connection timeout be investigated?",
+      "relevant": [
+        "http",
+        "tcp"
+      ]
+    },
+    {
+      "id": "N9",
+      "question": "What routing problems can cause unreachable destinations?",
+      "relevant": [
+        "routing"
+      ]
+    },
+    {
+      "id": "N10",
+      "question": "What troubleshooting steps should be followed for DNS failures?",
+      "relevant": [
+        "dns"
+      ]
+    }
+  ]
+}
