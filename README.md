@@ -4,6 +4,16 @@ An AI-powered network debugging agent that routes natural-language diagnostic re
 
 #live working URL:https://ai-security-log-analyst.onrender.com
 
+## Engineering Highlights
+
+- **Agent orchestration:** a LangGraph/LangChain orchestrator routes natural-language troubleshooting requests to specialized DNS, connectivity and service/TLS agents.
+- **Real diagnostic tools:** MCP exposes DNS lookup, ping, traceroute, MTR, TCP, port and TLS checks rather than relying only on LLM-generated explanations.
+- **Concurrent diagnosis:** relevant specialists can run concurrently and their results are merged into a single response.
+- **Agentic RAG:** networking knowledge and troubleshooting runbooks provide grounded context for diagnosis.
+- **Production API:** FastAPI provides the diagnostic endpoint and interactive API documentation.
+- **Cloud-ready MCP:** the network tool server uses Streamable HTTP for deployment.
+- **AI + networking focus:** demonstrates an engineering path combining AI agents with Computer Networks and security-oriented troubleshooting.
+
 ## How it works
 
 ```
