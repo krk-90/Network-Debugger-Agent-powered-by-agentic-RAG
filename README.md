@@ -251,3 +251,15 @@ curl -X POST http://127.0.0.1:8080/diagnostics/ \
 - **Service**: `port`, `tcp`, `tls`, `ssl`, `https`, `service`, `connection`
 
 If no keywords match, all three specialists run and their results are merged.
+
+
+## Evaluation
+
+This repository includes reproducible evaluation tooling under `evaluation/`. Metrics are computed from real retrieval/API runs rather than hard-coded values.
+
+Run:
+```bash
+python evaluation/run_rag_retrieval_eval.py
+```
+
+Reported metrics include Hit Rate@K, Recall@K, Precision@K, MRR, and p50/p95 latency where applicable. Results are written to an evaluation results JSON file and should only be used for reporting after running the evaluation against the current system.
