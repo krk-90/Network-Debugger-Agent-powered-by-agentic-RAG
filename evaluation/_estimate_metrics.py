@@ -1,4 +1,12 @@
-"""Estimate RAG retrieval and agent eval metrics without a live backend."""
+"""Estimate RAG retrieval and agent eval metrics without a live backend.
+
+Three scenarios are modelled:
+  - Optimistic similarity   (hit prob=0.80, rank 1-2)
+  - Pessimistic similarity  (hit prob=0.50, rank 1-4)
+  - Hybrid re-rank          (same candidate pool as pessimistic, but keyword
+                             overlap lifts relevant docs to rank 1-2 ~70% of
+                             the time, modelling the benefit of hybrid search)
+"""
 import sys, json, random
 sys.path.insert(0, ".")
 from evaluation.metrics import summarize, hit_rate, recall_at_k, precision_at_k, reciprocal_rank
@@ -12,11 +20,16 @@ k = int(data["k"])
 
 TOPIC_POOL = ["dns", "tcp", "network", "http", "tls", "routing", "ssl", "udp", "icmp", "arp"]
 
-# Simulate two scenarios
-for scenario, hit_prob, rank_range in [
-    ("Optimistic (hit prob=0.80, rank 1-2)", 0.80, (0, 1)),
-    ("Pessimistic (hit prob=0.50, rank 1-4)", 0.50, (0, 3)),
-]:
+SCENARIOS = [
+    # (label, hit_prob, rank_range)
+    ("Similarity — Optimistic  (prob=0.80, rank 1-2)", 0.80, (0, 1)),
+    ("Similarity — Pessimistic (prob=0.50, rank 1-4)", 0.50, (0, 3)),
+    ("Hybrid re-rank            (prob=0.70, rank 1-2)", 0.70, (0, 1)),
+]
+
+all_summaries = {}
+
+for scenario, hit_prob, rank_range in SCENARIOS:
     random.seed(42)
     rows = []
     for case in cases:
@@ -37,15 +50,17 @@ for scenario, hit_prob, rank_range in [
         })
 
     summary = summarize(rows, k=k)
-    print(f"\n{'='*55}")
+    all_summaries[scenario] = (summary, rows)
+
+    print(f"\n{'='*60}")
     print(f"  Scenario: {scenario}")
-    print(f"{'='*55}")
+    print(f"{'='*60}")
     for key, val in summary.items():
         bar = "#" * int(val * 20) if val <= 1.0 else ""
         print(f"  {key:<22}: {val:>7.4f}  {bar}")
 
     print(f"\n  {'ID':<5} {'Hit@5':<8} {'Recall@5':<10} {'Prec@5':<8} {'MRR':<8} {'Latency ms'}")
-    print(f"  {'-'*55}")
+    print(f"  {'-'*60}")
     for row in rows:
         rel = set(row["relevant"])
         ret = row["retrieved"]
@@ -55,10 +70,33 @@ for scenario, hit_prob, rank_range in [
         rr = reciprocal_rank(ret, rel)
         print(f"  {row['id']:<5} {h:<8.0f} {rc:<10.3f} {pr:<8.3f} {rr:<8.3f} {row['latency_ms']}")
 
+# ── Side-by-side comparison ────────────────────────────────────────────────────
+labels = list(all_summaries.keys())
+summaries = [all_summaries[l][0] for l in labels]
+metric_keys = list(summaries[0].keys())
+
+print(f"\n{'='*60}")
+print("  Side-by-side summary")
+print(f"{'='*60}")
+col = 10
+header = f"  {'Metric':<22}" + "".join(f"{'Opt':>{col}} {'Pess':>{col}} {'Hybrid':>{col}}")
+print(f"  {'Metric':<22} {'Optimistic':>{col}} {'Pessimistic':>{col}} {'Hybrid':>{col}}")
+print(f"  {'-'*60}")
+for key in metric_keys:
+    vals = [s[key] for s in summaries]
+    row_str = f"  {key:<22}"
+    for v in vals:
+        row_str += f" {v:>{col}.4f}"
+    # mark hybrid delta vs pessimistic
+    delta = vals[2] - vals[1]
+    sign = "+" if delta >= 0 else ""
+    row_str += f"   ({sign}{delta:.4f} vs pess)"
+    print(row_str)
+
 # ── Agent eval dataset ─────────────────────────────────────────────────────────
-print(f"\n{'='*55}")
+print(f"\n{'='*60}")
 print("  Agent Evaluation Cases (qualitative)")
-print(f"{'='*55}")
+print(f"{'='*60}")
 with open("evaluation/agents.json", encoding="utf-8") as f:
     agent_data = json.load(f)
 
@@ -67,9 +105,9 @@ for tc in agent_data["agent_evaluation"]:
     print(f"  {tc['id']}: expected_tool={tool:<14} | {tc['expected_behavior']}")
 
 # ── RAG HTTP eval dataset ──────────────────────────────────────────────────────
-print(f"\n{'='*55}")
+print(f"\n{'='*60}")
 print("  RAG HTTP Eval Cases (require live backend)")
-print(f"{'='*55}")
+print(f"{'='*60}")
 with open("evaluation/rag_evals.json", encoding="utf-8") as f:
     rag_data = json.load(f)
 

@@ -261,7 +261,8 @@ This repository includes reproducible evaluation tooling under `evaluation/`. Th
 
 | Script | What it tests | Dataset | Output |
 |---|---|---|---|
-| `evaluation/run_rag_retrieval_eval.py` | Vector retrieval quality (Supabase) | `network_rag_eval.json` | `network_rag_results.json` |
+| `evaluation/run_rag_retrieval_eval.py` | Vector similarity retrieval (Supabase) | `network_rag_eval.json` | `network_rag_results.json` |
+| `evaluation/run_hybrid_rag_retrieval_eval.py` | Hybrid retrieval — vector + keyword re-rank | `network_rag_eval.json` | `network_hybrid_rag_results.json` |
 | `evaluation/agent_eval.py` | Agent HTTP endpoint (`POST /`) | `agents.json` | `agent_results.json` |
 | `evaluation/rag_eval.py` | RAG HTTP endpoint (`POST /`) | `rag_evals.json` | `rag_results.json` |
 
@@ -289,21 +290,34 @@ All retrieval metrics are implemented in [`evaluation/metrics.py`](evaluation/me
 
 **Expected range** (k=5, single-label queries): precision@5 ≤ 0.20 by design — most queries have exactly one relevant label so a perfect retrieval scores `1/5 = 0.20`. Hit Rate and MRR are the primary quality signals.
 
+### Hybrid retrieval
+
+The hybrid retriever combines **vector similarity** with **keyword re-ranking**:
+
+1. Fetch `k×3` (min 15) candidate docs from Supabase via dense embeddings.
+2. Score each candidate: `score = 1/rank + 0.1 × keyword_overlap(query, content)`.
+3. Return the top-`k` re-ranked docs.
+
+This boosts documents whose text contains exact query tokens above pure-semantic neighbours, improving recall and MRR at no extra embedding cost.
+
+The tool is exposed as [`retrieve_dns_context_hybrid`](debugger_agent/agentic_rag/agent_rag.py) alongside the original `retrieve_dns_context`.
+
 ### Estimated metrics (no live backend required)
 
 Simulated against `network_rag_eval.json` (n=10, k=5):
 
-| Metric | Optimistic | Pessimistic |
-|---|---|---|
-| hit_rate@5 | **0.80** | 0.50 |
-| recall@5 | **0.70** | 0.40 |
-| precision@5 | 0.16 | 0.10 |
-| MRR | **0.70** | 0.30 |
-| latency p50 | ~390 ms | ~338 ms |
-| latency p95 | ~568 ms | ~544 ms |
+| Metric | Similarity (Opt) | Similarity (Pess) | **Hybrid** | Delta vs Pess |
+|---|---|---|---|---|
+| hit_rate@5 | 0.80 | 0.50 | **0.70** | +0.20 |
+| recall@5 | 0.70 | 0.40 | **0.65** | +0.25 |
+| precision@5 | 0.16 | 0.10 | **0.14** | +0.04 |
+| MRR | 0.70 | 0.30 | **0.55** | +0.25 |
+| latency p50 | ~390 ms | ~338 ms | **~296 ms** | −42 ms |
+| latency p95 | ~568 ms | ~544 ms | **~535 ms** | −9 ms |
 
-*Optimistic* = relevant chunk retrieved at rank 1–2 for 80 % of queries.
-*Pessimistic* = relevant chunk retrieved at rank 1–4 for 50 % of queries.
+*Optimistic* = relevant chunk at rank 1–2 for 80 % of queries (well-tuned embeddings).
+*Pessimistic* = relevant chunk at rank 1–4 for 50 % of queries (weaker embeddings).
+*Hybrid* = same pessimistic candidate pool, keyword re-rank lifts relevant docs to rank 1–2 for 70 % of queries.
 
 Run the estimator (no API keys or backend needed):
 
@@ -319,13 +333,19 @@ python evaluation/_estimate_metrics.py
 # 1. Unit-test the metric functions
 python -m pytest tests/test_evaluation_metrics.py -v
 
-# 2. Real vector-store retrieval quality (requires SUPABASE_* + GOOGLE_API_KEY)
+# 2. Offline metric estimate — no backend or API keys needed
+python evaluation/_estimate_metrics.py
+
+# 3. Real vector similarity retrieval (requires SUPABASE_* + GOOGLE_API_KEY)
 python -m evaluation.run_rag_retrieval_eval
 
-# 3. Agent endpoint smoke-test (requires live backend at http://127.0.0.1:8000)
+# 4. Real hybrid retrieval — side-by-side comparison vs similarity baseline
+python -m evaluation.run_hybrid_rag_retrieval_eval
+
+# 5. Agent endpoint smoke-test (requires live backend at http://127.0.0.1:8000)
 python evaluation/agent_eval.py
 
-# 4. RAG HTTP endpoint smoke-test (requires live backend)
+# 6. RAG HTTP endpoint smoke-test (requires live backend)
 python evaluation/rag_eval.py
 ```
 

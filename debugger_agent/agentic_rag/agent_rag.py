@@ -14,6 +14,32 @@ from langchain.tools import tool
 from langsmith import traceable
 from supabase import create_client
 
+# ---------------------------------------------------------------------------
+# Hybrid retrieval helpers
+# ---------------------------------------------------------------------------
+
+def _keyword_score(query: str, content: str) -> int:
+    """Return count of query tokens found in document content (case-insensitive)."""
+    tokens = [t.lower() for t in query.split() if len(t) > 2]
+    text = content.lower()
+    return sum(1 for t in tokens if t in text)
+
+
+def _hybrid_rerank(query: str, docs: list[Document], k: int) -> list[Document]:
+    """Re-rank *docs* by combining vector rank position with keyword overlap score.
+
+    Vector rank contributes a score of ``1 / rank`` (reciprocal rank); keyword
+    overlap adds a small bonus so that documents with exact term matches rise
+    above pure-semantic neighbours.  The top-*k* documents are returned.
+    """
+    scored: list[tuple[float, Document]] = []
+    for rank, doc in enumerate(docs, 1):
+        rr = 1.0 / rank
+        kw = _keyword_score(query, doc.page_content)
+        scored.append((rr + 0.1 * kw, doc))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [doc for _, doc in scored[:k]]
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
@@ -50,7 +76,7 @@ def _format_documents(documents: list[Document]) -> str:
     return "\n\n".join(formatted)
 
 
-def _build_retrieval_chain():
+def _build_retrieval_chain(hybrid: bool = False):
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError("SUPABASE_URL and SUPABASE_KEY are required for RAG retrieval")
 
@@ -66,6 +92,20 @@ def _build_retrieval_chain():
         table_name=SUPABASE_TABLE,
         query_name=SUPABASE_QUERY,
     )
+
+    if hybrid:
+        # Fetch a wider candidate pool then re-rank with keyword overlap.
+        fetch_k = max(RETRIEVAL_K * 3, 15)
+        base_retriever = vectorstore.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": fetch_k},
+        )
+        def _hybrid_invoke(query: str) -> str:
+            docs = base_retriever.invoke(query)
+            reranked = _hybrid_rerank(query, docs, RETRIEVAL_K)
+            return _format_documents(reranked)
+        return RunnableLambda(_hybrid_invoke)
+
     retriever = vectorstore.as_retriever(
         search_type="similarity",
         search_kwargs={"k": RETRIEVAL_K},
@@ -73,25 +113,48 @@ def _build_retrieval_chain():
     return retriever | RunnableLambda(_format_documents)
 
 
-def get_retrieval_chain():
-    global _retrieval_chain
+_hybrid_chain: Any | None = None
+_hybrid_lock = threading.Lock()
+
+
+def get_retrieval_chain(hybrid: bool = False):
+    global _retrieval_chain, _hybrid_chain
+    if hybrid:
+        if _hybrid_chain is None:
+            with _hybrid_lock:
+                if _hybrid_chain is None:
+                    _hybrid_chain = _build_retrieval_chain(hybrid=True)
+        return _hybrid_chain
     if _retrieval_chain is None:
         with _lock:
             if _retrieval_chain is None:
-                _retrieval_chain = _build_retrieval_chain()
+                _retrieval_chain = _build_retrieval_chain(hybrid=False)
     return _retrieval_chain
 
 
-def refresh_retrieval_chain() -> None:
-    global _retrieval_chain
-    with _lock:
-        _retrieval_chain = None
+def refresh_retrieval_chain(hybrid: bool = False) -> None:
+    global _retrieval_chain, _hybrid_chain
+    if hybrid:
+        with _hybrid_lock:
+            _hybrid_chain = None
+    else:
+        with _lock:
+            _retrieval_chain = None
 
 
 @tool(description="Retrieve DNS troubleshooting guidance from the configured knowledge base.")
 @traceable(name="retrieve_dns_context", run_type="tool")
 def retrieve_dns_context(query: str) -> str:
     try:
-        return get_retrieval_chain().invoke(query)
+        return get_retrieval_chain(hybrid=False).invoke(query)
+    except Exception as exc:
+        return f"Knowledge-base retrieval is currently unavailable ({type(exc).__name__})."
+
+
+@tool(description="Retrieve DNS troubleshooting guidance using hybrid (vector + keyword) search.")
+@traceable(name="retrieve_dns_context_hybrid", run_type="tool")
+def retrieve_dns_context_hybrid(query: str) -> str:
+    try:
+        return get_retrieval_chain(hybrid=True).invoke(query)
     except Exception as exc:
         return f"Knowledge-base retrieval is currently unavailable ({type(exc).__name__})."
