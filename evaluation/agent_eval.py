@@ -4,7 +4,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
-DATASET_PATH = BASE_DIR / "agent_dataset.json"
+DATASET_PATH = BASE_DIR / "agents.json"
 RESULTS_PATH = BASE_DIR / "agent_results.json"
 
 API_URL = "http://127.0.0.1:8000/"

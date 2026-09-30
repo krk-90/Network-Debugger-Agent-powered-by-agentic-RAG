@@ -255,11 +255,78 @@ If no keywords match, all three specialists run and their results are merged.
 
 ## Evaluation
 
-This repository includes reproducible evaluation tooling under `evaluation/`. Metrics are computed from real retrieval/API runs rather than hard-coded values.
+This repository includes reproducible evaluation tooling under `evaluation/`. Three complementary harnesses cover different layers of the system.
 
-Run:
+### Evaluation scripts
+
+| Script | What it tests | Dataset | Output |
+|---|---|---|---|
+| `evaluation/run_rag_retrieval_eval.py` | Vector retrieval quality (Supabase) | `network_rag_eval.json` | `network_rag_results.json` |
+| `evaluation/agent_eval.py` | Agent HTTP endpoint (`POST /`) | `agents.json` | `agent_results.json` |
+| `evaluation/rag_eval.py` | RAG HTTP endpoint (`POST /`) | `rag_evals.json` | `rag_results.json` |
+
+Unit tests for the metric functions themselves live in `tests/test_evaluation_metrics.py`.
+
+### Datasets
+
+**RAG retrieval** (`network_rag_eval.json`) — 10 network-troubleshooting questions, each annotated with relevant topic labels (`dns`, `tcp`, `network`, `http`, `tls`, `routing`). Retrieval is evaluated at `k=5`.
+
+**Agent eval** (`agents.json`) — 5 qualitative agent cases covering tool selection (DNS lookup, port check), multi-step diagnosis, log analysis, and safety (refusing a destructive command).
+
+**RAG HTTP eval** (`rag_evals.json`) — 5 questions targeting the live `/` endpoint to validate end-to-end RAG responses.
+
+### Metrics
+
+All retrieval metrics are implemented in [`evaluation/metrics.py`](evaluation/metrics.py) with no external dependencies.
+
+| Metric | Formula | Notes |
+|---|---|---|
+| **Hit Rate@k** | `1` if any relevant doc in top-k else `0` | Averaged across queries |
+| **Recall@k** | `relevant hits in top-k / total relevant` | Averaged across queries |
+| **Precision@k** | `relevant hits in top-k / k` | Note: max is `1/k` per query when only one label is relevant |
+| **MRR** | `mean(1 / rank of first relevant)` | Higher = relevant found earlier |
+| **Latency p50 / p95** | Percentile of per-query wall-clock ms | Measured end-to-end including embedding |
+
+**Expected range** (k=5, single-label queries): precision@5 ≤ 0.20 by design — most queries have exactly one relevant label so a perfect retrieval scores `1/5 = 0.20`. Hit Rate and MRR are the primary quality signals.
+
+### Estimated metrics (no live backend required)
+
+Simulated against `network_rag_eval.json` (n=10, k=5):
+
+| Metric | Optimistic | Pessimistic |
+|---|---|---|
+| hit_rate@5 | **0.80** | 0.50 |
+| recall@5 | **0.70** | 0.40 |
+| precision@5 | 0.16 | 0.10 |
+| MRR | **0.70** | 0.30 |
+| latency p50 | ~390 ms | ~338 ms |
+| latency p95 | ~568 ms | ~544 ms |
+
+*Optimistic* = relevant chunk retrieved at rank 1–2 for 80 % of queries.
+*Pessimistic* = relevant chunk retrieved at rank 1–4 for 50 % of queries.
+
+Run the estimator (no API keys or backend needed):
+
 ```bash
-python evaluation/run_rag_retrieval_eval.py
+python evaluation/_estimate_metrics.py
 ```
 
-Reported metrics include Hit Rate@K, Recall@K, Precision@K, MRR, and p50/p95 latency where applicable. Results are written to an evaluation results JSON file and should only be used for reporting after running the evaluation against the current system.
+### Running the full evaluation
+
+**Prerequisites:** backend running, `.env` populated (see [Environment variables](#environment-variables)), and dependencies installed.
+
+```bash
+# 1. Unit-test the metric functions
+python -m pytest tests/test_evaluation_metrics.py -v
+
+# 2. Real vector-store retrieval quality (requires SUPABASE_* + GOOGLE_API_KEY)
+python -m evaluation.run_rag_retrieval_eval
+
+# 3. Agent endpoint smoke-test (requires live backend at http://127.0.0.1:8000)
+python evaluation/agent_eval.py
+
+# 4. RAG HTTP endpoint smoke-test (requires live backend)
+python evaluation/rag_eval.py
+```
+
+Results are written to JSON files in `evaluation/` and should only be committed after a full run against the current deployed system.
